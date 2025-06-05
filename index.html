@@ -1,21 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>Car-Detector ONNX Demo</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
- body{font-family:sans-serif;background:#eee;text-align:center}
- canvas{border:1px solid #ccc;margin-top:10px}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Car-Detector ONNX Demo</title>
+
+  <style>
+    body            { margin:0; padding:0; background:#eee; font-family:sans-serif; text-align:center }
+    h1              { margin:18px 0 10px }
+    label           { font-size:15px }
+    input[type=file]{ margin:6px 0 16px }
+    canvas          { border:1px solid #aaa; max-width:90vw; height:auto }
+  </style>
 </head>
+
 <body>
   <h1>Car-Detector ONNX Demo</h1>
-  选择待检测图片： <input type="file" id="fileInput" accept="image/*"><br>
+
+  <!-- 上传按钮 -->
+  <label>选择待检测图片：
+    <input type="file" id="fileInput" accept="image/*" />
+  </label><br />
+
+  <!-- 画布 (固定 608×608，和模型保持一致) -->
   <canvas id="canvas" width="608" height="608"></canvas>
 
-  <!-- onnxruntime-web（CDN） -->
-  <script defer src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js"></script>
-  <script src="app.js"></script>
+  <!-- 先加载 ORT，再加载你的业务脚本。用  defer  保证顺序 -->
+  <script defer src="ort.min.js"></script>
+  <script defer src="app.js"></script>
 </body>
 </html>
