@@ -2,29 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Car-Detector ONNX Demo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
- body{font-family:sans-serif;text-align:center;background:#eee;margin:0}
- h1{margin:1rem 0}
- canvas{border:1px solid #ccc;max-width:100%;height:auto}
- #work{display:none}          /* ▶︎ 隐藏工作用 608×608 画布 */
+ body{font-family:sans-serif;background:#eee;text-align:center}
+ canvas{border:1px solid #ccc;margin-top:10px}
 </style>
 </head>
 <body>
   <h1>Car-Detector ONNX Demo</h1>
+  选择待检测图片： <input type="file" id="fileInput" accept="image/*"><br>
+  <canvas id="canvas" width="608" height="608"></canvas>
 
-  <label for="fileInput">选择待检测图片：</label>
-  <input  id="fileInput" type="file" accept="image/*" title="上传一张车的照片">
-
-  <br>
-  <!-- 展示画布（按原始比例显示）-->
-  <canvas id="canvas" width="640" height="480"></canvas>
-  <!-- 隐藏工作画布（固定 608×608，用来喂模型）-->
-  <canvas id="work"   width="608" height="608"></canvas>
-
-  <!-- 本地的 ort.min.js 与业务脚本 -->
-  <script src="ort.min.js"></script>
-  <script type="module" src="app.js"></script>
+  <!-- onnxruntime-web（CDN） -->
+  <script async src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
