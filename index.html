@@ -1,25 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Car-Detector Demo</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<title>Car-Detector ONNX Demo</title>
+<style>
+ body{font-family:sans-serif;text-align:center;background:#eee}
+ #fileInput{margin:20px}
+ canvas{border:1px solid #ccc}
+</style>
 </head>
 <body>
   <h1>Car-Detector ONNX Demo</h1>
 
-  <!-- 上传入口 -->
+  <!-- 上传按钮 -->
   <input type="file" id="fileInput" accept="image/*">
-  <br><br>
 
-  <!-- 渲染原图 -->
+  <!-- 画布 -->
+  <br>
   <canvas id="canvas" width="640" height="480"></canvas>
 
-  <!-- 推理结果 -->
-  <pre id="log"></pre>
-
-  <!-- ONNX Runtime + 你的脚本 -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm.min.js"></script>
-  <script src="app.js"></script>
+  <script>
+    // 只做测试：加载模型成功后在 console 打印
+    ort.InferenceSession.create('./best.onnx')
+        .then(()=>console.log('model ok!'))
+        .catch(e=>console.error(e));
+
+    document.getElementById('fileInput').onchange = ev=>{
+      const file = ev.target.files[0];
+      if(!file) return;
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = ()=>document.getElementById('canvas').getContext('2d')
+                                   .drawImage(img,0,0,640,480);
+    };
+  </script>
 </body>
 </html>
