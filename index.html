@@ -5,20 +5,16 @@
   <title>Car-Detector ONNX Demo</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
+
 <body>
   <h1>Car-Detector ONNX Demo</h1>
-
-  <!-- 上传按钮 -->
   <input type="file" id="fileInput" accept="image/*" />
-
-  <!-- 绘图画布 -->
-  <br />
+  <br>
   <canvas id="canvas" width="640" height="480"></canvas>
 
-  <!-- ① 先加载 onnxruntime-web（一定要放在 app.js 前面）-->
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm.min.js"></script>
-
-  <!-- ② 业务逻辑 -->
-  <script src="./app.js"></script>
+  <!-- 本地 ORT -->
+  <script defer src="./ort.min.js"></script>
+  <!-- 你的业务逻辑 -->
+  <script defer src="./app.js"></script>
 </body>
 </html>
