@@ -1,98 +1,117 @@
-/* -------------------------------------------------
- * Car-Detector ONNX demo  (xyxy + NMS 版本 · 键名自适应)
- * ------------------------------------------------- */
-(async () => {
-  try {
-    /* 1. ORT 初始化 */
-    ort.env.wasm.wasmPaths = "./";
-    ort.env.wasm.simd      = true;
+/* ---------------- 全局配置 ---------------- */
+const MODEL_URL   = "best.onnx";
+const SCORE_THRES = 0.35;        // ❶ 抬高阈值，过滤低分框
+const IOU_THRES   = 0.45;
+const MIN_WH      = 10;          // ❷ 过滤异常窄/扁框（像素）
 
-    const session = await ort.InferenceSession.create("./best.onnx", {
-      executionProviders: ["wasm"]
-    });
-    console.log("✅  ONNX 模型加载完成");
-
-    /* 1-2 记录真实的输入/输出名 */
-    const inName  = session.inputNames[0];   // 例如 'input0' / 'images'
-    const outName = session.outputNames[0];  // 例如 'output0'
-    console.log(`ℹ️  input  name: ${inName}`);
-    console.log(`ℹ️  output name: ${outName}`);
-
-    /* 2. DOM */
-    const fileInput = document.getElementById("fileInput");
-    const canvas    = document.getElementById("canvas");
-    const ctx       = canvas.getContext("2d");
-    const SIZE      = 608;                   // fixed input size
-
-    /* 3. 上传并推理 */
-    fileInput.addEventListener("change", async ev => {
-      const file = ev.target.files[0];
-      if (!file) return;
-
-      try {
-        /* 3-1 读图片并 letter-box 到 608×608 */
-        const img   = new Image();
-        img.src     = URL.createObjectURL(file);
-        await img.decode();
-
-        const scale = Math.min(SIZE / img.width, SIZE / img.height);
-        const dw    = (SIZE - img.width  * scale) / 2;
-        const dh    = (SIZE - img.height * scale) / 2;
-
-        ctx.clearRect(0, 0, SIZE, SIZE);
-        ctx.drawImage(img, dw, dh, img.width * scale, img.height * scale);
-
-        /* 3-2 CHW Tensor */
-        const { data } = ctx.getImageData(0, 0, SIZE, SIZE);
-        const chw = new Float32Array(3 * SIZE * SIZE);
-        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-          chw[p]                 = data[i]     / 255;
-          chw[p +   SIZE*SIZE]   = data[i + 1] / 255;
-          chw[p + 2*SIZE*SIZE]   = data[i + 2] / 255;
-        }
-        const tensor = new ort.Tensor("float32", chw, [1, 3, SIZE, SIZE]);
-
-        /* 3-3 推理 */
-        const outputMap = await session.run({ [inName]: tensor });
-        const y = outputMap[outName];              // Tensor 对象
-        if (!y) {
-          console.error("❌ 推理成功，但没拿到输出！", outputMap);
-          return;
-        }
-
-        /* 3-4 解析 xyxy + conf */
-        const boxes = [];
-        const raw = y.data;                        // TypedArray
-        for (let i = 0; i < raw.length; i += 6) {
-          const score = raw[i + 4];
-          if (score < 0.25) continue;
-          boxes.push({
-            x1: raw[i],  y1: raw[i + 1],
-            x2: raw[i + 2], y2: raw[i + 3],
-            score
-          });
-        }
-
-        /* 3-5 重绘背景再画框 */
-        ctx.clearRect(0, 0, SIZE, SIZE);
-        ctx.drawImage(img, dw, dh, img.width * scale, img.height * scale);
-
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth   = 2;
-        ctx.fillStyle   = "lime";
-        ctx.font        = "18px sans-serif";
-        boxes.forEach(b => {
-          ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
-          ctx.fillText(`car ${(b.score*100).toFixed(1)}%`, b.x1 + 3, b.y1 + 18);
-        });
-
-        console.log(`✅  detections : ${boxes.length}`);
-      } catch (err) {
-        console.error("❌  推理或绘制时出错：", err);
-      }
-    });
-
-  } catch (err) {
-    console.error("❌  模型加载失败：", err);
+/* ---------- IoU & NMS ---------- */
+function boxIou(a, b) {
+  const [x1,y1,x2,y2] = a, [x1_,y1_,x2_,y2_] = b;
+  const inter = Math.max(0, Math.min(x2,x2_) - Math.max(x1,x1_)) *
+                Math.max(0, Math.min(y2,y2_) - Math.max(y1,y1_));
+  const union = (x2-x1)*(y2-y1) + (x2_-x1_)*(y2_-y1_) - inter;
+  return inter / union;
+}
+function nms(arr) {
+  arr.sort((a,b) => b.conf - a.conf);
+  const keep = [];
+  while (arr.length) {
+    const cur = arr.shift();
+    keep.push(cur);
+    arr = arr.filter(b => boxIou(cur.xyxy, b.xyxy) < IOU_THRES);
   }
+  return keep;
+}
+
+/* -------------- 推理流程 -------------- */
+(async () => {
+  ort.env.wasm.wasmPaths = "./";
+  const session = await ort.InferenceSession.create(MODEL_URL);
+  console.log("✅ ONNX loaded");
+
+  const inp = document.getElementById("fileInput");
+  const cvs = document.getElementById("canvas");
+  const ctx = cvs.getContext("2d");
+
+  inp.onchange = async ev => {
+    const file = ev.target.files[0];
+    if (!file) return;
+
+    /* 1. 显示原图 */
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    await img.decode();
+    cvs.width = img.width;
+    cvs.height = img.height;
+    ctx.drawImage(img, 0, 0);
+
+    /* 2. letter-box 到 640×640 */
+    const SZ = 640;
+    const boxCanvas = new OffscreenCanvas(SZ, SZ);
+    const bx = boxCanvas.getContext("2d");
+
+    const s = Math.min(SZ / img.width, SZ / img.height);
+    const nw = img.width * s,  nh = img.height * s;
+    const padX = (SZ - nw) / 2, padY = (SZ - nh) / 2;
+
+    bx.fillStyle = "rgb(114,114,114)";
+    bx.fillRect(0, 0, SZ, SZ);
+    bx.drawImage(img, padX, padY, nw, nh);
+
+    /* 3. → CHW Float32 0-1 */
+    const data = bx.getImageData(0, 0, SZ, SZ).data;
+    const chw  = new Float32Array(3 * SZ * SZ);
+    for (let i = 0, p = 0; i < data.length; i += 4, ++p) {
+      chw[p]            = data[i]     / 255;   // R
+      chw[p + SZ*SZ]    = data[i + 1] / 255;   // G
+      chw[p + 2*SZ*SZ]  = data[i + 2] / 255;   // B
+    }
+    const input = new ort.Tensor("float32", chw, [1, 3, SZ, SZ]);
+
+    /* 4. 推理 */
+    const out   = await session.run({images: input});
+    const pred  = out[Object.keys(out)[0]].data;      // Float32Array
+    const boxes = [];
+
+    /* 5. 解析 */
+    for (let i = 0; i < pred.length; i += 6) {
+      const cx = pred[i],  cy = pred[i+1];
+      const w  = pred[i+2], h  = pred[i+3];
+      const obj = pred[i+4];
+      const cls = pred[i+5];                 // 单类别 => 只有 cls0
+      const conf = obj * cls;                // ❸ 正确合成置信度
+      if (conf < SCORE_THRES) continue;
+
+      /* 还原到角点坐标（640 坐标系）*/
+      let x1 = cx - w/2, y1 = cy - h/2;
+      let x2 = cx + w/2, y2 = cy + h/2;
+
+      /* 映射回原图 */
+      x1 = (x1 - padX) / s;  y1 = (y1 - padY) / s;
+      x2 = (x2 - padX) / s;  y2 = (y2 - padY) / s;
+
+      /* 裁剪 + 过滤异常框 */
+      x1 = Math.max(0, x1);  y1 = Math.max(0, y1);
+      x2 = Math.min(img.width, x2);  y2 = Math.min(img.height, y2);
+      if (x2 - x1 < MIN_WH || y2 - y1 < MIN_WH) continue;   // ❹
+
+      boxes.push({conf, xyxy:[x1,y1,x2,y2]});
+    }
+    const dets = nms(boxes);
+
+    /* 6. 绘框 */
+    ctx.lineWidth = 2;
+    ctx.font = "18px Arial";
+    ctx.textBaseline = "top";
+    dets.forEach(b => {
+      const [x1,y1,x2,y2] = b.xyxy;
+      ctx.strokeStyle = "lime";
+      ctx.fillStyle   = "lime";
+      ctx.beginPath();
+      ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      ctx.stroke();
+      ctx.fillText(`car ${(b.conf*100).toFixed(1)}%`, x1+2, y1+2);
+    });
+    console.log(`🎯 kept ${dets.length} boxes`);
+  };
 })();
