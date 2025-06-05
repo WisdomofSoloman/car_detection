@@ -3,36 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <title>Car-Detector ONNX Demo</title>
-  <style>
-    body        { font-family: sans-serif; text-align: center; background: #eee; }
-    #fileInput  { margin: 20px; }
-    canvas      { border: 1px solid #ccc; }
-  </style>
+  <link rel="stylesheet" href="./style.css" />
 </head>
-
 <body>
   <h1>Car-Detector ONNX Demo</h1>
 
   <!-- 上传按钮 -->
   <input type="file" id="fileInput" accept="image/*" />
 
-  <!-- 画布 -->
+  <!-- 绘图画布 -->
   <br />
   <canvas id="canvas" width="640" height="480"></canvas>
 
-  <!-- 1. 先加载 onnxruntime-web -->
+  <!-- ① 先加载 onnxruntime-web（一定要放在 app.js 前面）-->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm.min.js"></script>
 
-  <!-- 2.（可选）指定 wasm 文件所在目录；放在 app.js 之前即可 -->
-  <script>
-    /* 如果你的 app.js 里已经有
-         ort.env.wasm.wasmPaths = location.pathname
-       可以把下面这行注释掉；否则保留 ↓
-    */
-    ort.env.wasm.wasmPaths = location.pathname;   // or 关闭 CDN: 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/'
-  </script>
-
-  <!-- 3. 真正的推理逻辑 -->
+  <!-- ② 业务逻辑 -->
   <script src="./app.js"></script>
 </body>
 </html>
