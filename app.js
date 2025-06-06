@@ -120,7 +120,7 @@ function buildGrids(size = CFG.INPUT_SIZE) {
     }
 
     /* 4-6 NMS */
-    const keep = nms(boxes);
+    const keep = Array.isArray(nms(boxes)) ? nms(boxes) : [];
     console.log(`🔍 kept ${keep.length} boxes`);
 
     /* 4-7 绘制到原图坐标 */
