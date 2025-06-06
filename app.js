@@ -3,8 +3,8 @@ const CFG = {
   MODEL_URL  : "best.onnx",
   INPUT_SIZE : 608,
   STRIDES    : [8, 16, 32],
-  SCORE_THRES: 0.60,      // 置信度阈值
-  NMS_IOU    : 0.40       // 第一轮 NMS IoU 阈值
+  SCORE_THRES: 0.70,      // 置信度阈值
+  NMS_IOU    : 0.30       // 第一轮 NMS IoU 阈值
 };
 
 /* ------------- 工具函数 -------------- */
@@ -119,7 +119,7 @@ function buildGrids(size = CFG.INPUT_SIZE) {
       boxes.push({ score, xyxy:[cx-w/2, cy-h/2, cx+w/2, cy+h/2] });
     }
 
-    /* 4-6 NMS（含防御式写法）*/
+    /* 4-6 NMS*/
     let keep = Array.isArray(nms(boxes)) ? nms(boxes) : [];
     console.log(`🔍 kept ${keep.length} boxes`);
 
