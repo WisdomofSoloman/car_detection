@@ -3,8 +3,8 @@ const CFG = {
   MODEL_URL  : "best.onnx",
   INPUT_SIZE : 608,
   STRIDES    : [8, 16, 32],
-  SCORE_THRES: 0.55,
-  NMS_IOU    : 0.3
+  SCORE_THRES: 0.60,      // 置信度阈值
+  NMS_IOU    : 0.40       // 第一轮 NMS IoU 阈值
 };
 
 /* ------------- 工具函数 -------------- */
@@ -17,24 +17,13 @@ function iou(a, b) {
   const union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
   return inter / union;
 }
-
 function nms(boxes) {
-  // 1) 先按置信度排序 & IoU 抑制（跟之前一样）
   boxes.sort((a, b) => b.score - a.score);
-  const first = [];
+  const keep = [];
   while (boxes.length) {
     const box = boxes.shift();
-    first.push(box);
+    keep.push(box);
     boxes = boxes.filter(b => iou(box.xyxy, b.xyxy) < CFG.NMS_IOU);
-  }
-first.sort((a, b) => (b.xyxy[2]-b.xyxy[0])*(b.xyxy[3]-b.xyxy[1])
-                       - (a.xyxy[2]-a.xyxy[0])*(a.xyxy[3]-a.xyxy[1]));
-  const FINAL_IOU = 0.3;
-  const keep = [];
-  while (first.length) {
-    const ref = first.shift();
-    keep.push(ref);
-    first = first.filter(b => iou(ref.xyxy, b.xyxy) < FINAL_IOU);
   }
   return keep;
 }
@@ -61,7 +50,7 @@ function buildGrids(size = CFG.INPUT_SIZE) {
   ort.env.wasm.wasmPaths = "./";
   const session = await ort.InferenceSession.create(CFG.MODEL_URL);
   console.log("✅ ONNX loaded");
-  window.session = session;          // 方便调试
+  window.session = session;          // 方便调试用
 
   /* 2. DOM */
   const fileInput = document.getElementById("fileInput");
@@ -130,9 +119,24 @@ function buildGrids(size = CFG.INPUT_SIZE) {
       boxes.push({ score, xyxy:[cx-w/2, cy-h/2, cx+w/2, cy+h/2] });
     }
 
-    /* 4-6 NMS */
-    const keep = Array.isArray(nms(boxes)) ? nms(boxes) : [];
+    /* 4-6 NMS（含防御式写法）*/
+    let keep = Array.isArray(nms(boxes)) ? nms(boxes) : [];
     console.log(`🔍 kept ${keep.length} boxes`);
+
+    /* 4-6-extra 只保留同一位置最大的框 */
+    const SECOND_IOU = 0.30;                    // 二次分组阈值
+    keep.sort((a, b) =>                         // 按面积从大到小排序
+      (b.xyxy[2]-b.xyxy[0])*(b.xyxy[3]-b.xyxy[1]) -
+      (a.xyxy[2]-a.xyxy[0])*(a.xyxy[3]-a.xyxy[1])
+    );
+    const final = [];
+    while (keep.length) {
+      const ref = keep.shift();
+      final.push(ref);
+      keep = keep.filter(b => iou(ref.xyxy, b.xyxy) < SECOND_IOU);
+    }
+    keep = final;
+    console.log(`🎯 after 2nd pass => ${keep.length} boxes`);
 
     /* 4-7 绘制到原图坐标 */
     showCtx.lineWidth   = 2;
