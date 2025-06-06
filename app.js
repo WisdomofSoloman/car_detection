@@ -109,7 +109,7 @@ function nms(boxes) {
 
       boxes.push({ score, xyxy: [x1, y1, x2, y2] });
     }
-    const keep = nms(boxes);
+    const keep = boxes;  
 
     /* 3-6 绘制结果 (映射回原图坐标) */
     showCtx.lineWidth = 2;
@@ -118,18 +118,17 @@ function nms(boxes) {
     showCtx.fillStyle   = "#00FF00";
 
     keep.forEach(b => {
-      let [x1, y1, x2, y2] = b.xyxy;
-      // 先还原到 608，再减 pad，再除以 scale
-      x1 = (x1 * INPUT_SIZE - padX) / scale;
-      y1 = (y1 * INPUT_SIZE - padY) / scale;
-      x2 = (x2 * INPUT_SIZE - padX) / scale;
-      y2 = (y2 * INPUT_SIZE - padY) / scale;
+     let [x1, y1, x2, y2] = b.xyxy;
+     x1 = (x1 - padX) / scale;
+     y1 = (y1 - padY) / scale;
+     x2 = (x2 - padX) / scale;
+     y2 = (y2 - padY) / scale;
 
-      const w = x2 - x1, h = y2 - y1;
-      showCtx.strokeRect(x1, y1, w, h);
-      const label = `car ${ (b.score*100).toFixed(1) }%`;
-      showCtx.fillText(label, x1, y1 > 20 ? y1 - 5 : y1 + 20);
-    });
+     const w = x2 - x1, h = y2 - y1;
+     showCtx.strokeRect(x1, y1, w, h);
+     showCtx.fillText(`car ${(b.score * 100).toFixed(1)}%`, x1, y1 > 20 ? y1 - 5 : y1 + 20);
+});
+
 
     console.log(`🔍 kept ${keep.length} boxes`);
   };
