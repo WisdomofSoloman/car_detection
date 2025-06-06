@@ -1,6 +1,8 @@
 /* ----------------  配置  ---------------- */
 const MODEL_URL   = "best.onnx";     // 放在根目录即可
 const INPUT_SIZE  = 608;             // 训练 / 导出时用的尺寸
+const DEBUG = true;           // ← 打开调试
+const SCORE_THRES = DEBUG ? 0.05 : 0.30;
 const SCORE_THRES = 0.30;            // 置信度阈值
 const NMS_IOU     = 0.45;            // NMS IoU 阈值
 
@@ -86,30 +88,35 @@ function nms(boxes) {
     const tensor = new ort.Tensor("float32", chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
 
     /* 3-4  推理 */
+    /* 3-4  推理 */
+    const results = await session.run({ images: tensor });
+    console.log("ONNX output keys:", Object.keys(results));
+
+    const out = Object.values(results)[0];   // 先取第一个输出
+    console.log("dims =", out.dims);         // onnxruntime-web ≥1.20
+    console.log("first 18 numbers =", Array.from(out.data).slice(0, 18));
+    const scores = [];
+    for (let i = 4; i < out.data.length; i += 6) scores.push(out.data[i]);
+    console.log("max score =", Math.max(...scores));
+
     const { output0 } = await session.run({ images: tensor });
     const data = output0.data;          // Float32Array  len = 1×5×7581
 
     /* 3-5 解析 + NMS */
+    /* 3-5 解析 */
     const boxes = [];
-    const n = data.length / 5;
-    for (let i = 0; i < n; ++i) {
-      const off = i * 5;
-      const [x, y, w, h, obj] = data.slice(off, off + 5).map(sigmoid);
-
-      const score = obj;        // 只有 1 类 = car
+    const [b, num, ch] = out.dims;   // ch=6
+    for (let i = 0; i < num; ++i) {
+      const off = i * ch;
+      const x1    = out.data[off];
+      const y1    = out.data[off+1];
+      const x2    = out.data[off+2];
+      const y2    = out.data[off+3];
+      const score = out.data[off+4];
       if (score < SCORE_THRES) continue;
+      boxes.push({score, xyxy:[x1,y1,x2,y2]});
+}
 
-      // xywh → xyxy (相对 0-1)
-      const cx = x, cy = y;
-      const bw = w, bh = h;
-      const x1 = (cx - bw / 2);
-      const y1 = (cy - bh / 2);
-      const x2 = (cx + bw / 2);
-      const y2 = (cy + bh / 2);
-
-      boxes.push({ score, xyxy: [x1, y1, x2, y2] });
-    }
-    const keep = boxes;  
 
     /* 3-6 绘制结果 (映射回原图坐标) */
     showCtx.lineWidth = 2;
