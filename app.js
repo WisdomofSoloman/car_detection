@@ -17,13 +17,24 @@ function iou(a, b) {
   const union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
   return inter / union;
 }
+
 function nms(boxes) {
+  // 1) 先按置信度排序 & IoU 抑制（跟之前一样）
   boxes.sort((a, b) => b.score - a.score);
-  const keep = [];
+  const first = [];
   while (boxes.length) {
     const box = boxes.shift();
-    keep.push(box);
+    first.push(box);
     boxes = boxes.filter(b => iou(box.xyxy, b.xyxy) < CFG.NMS_IOU);
+  }
+first.sort((a, b) => (b.xyxy[2]-b.xyxy[0])*(b.xyxy[3]-b.xyxy[1])
+                       - (a.xyxy[2]-a.xyxy[0])*(a.xyxy[3]-a.xyxy[1]));
+  const FINAL_IOU = 0.3;
+  const keep = [];
+  while (first.length) {
+    const ref = first.shift();
+    keep.push(ref);
+    first = first.filter(b => iou(ref.xyxy, b.xyxy) < FINAL_IOU);
   }
   return keep;
 }
