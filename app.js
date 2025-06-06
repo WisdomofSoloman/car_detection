@@ -3,7 +3,7 @@ const CFG = {
   MODEL_URL  : "best.onnx",
   INPUT_SIZE : 608,
   STRIDES    : [8, 16, 32],
-  SCORE_THRES: 0.25,
+  SCORE_THRES: 0.65,
   NMS_IOU    : 0.45
 };
 
