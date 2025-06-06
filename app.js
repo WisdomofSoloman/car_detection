@@ -1,57 +1,36 @@
-/* ---------------- 配置 ---------------- */
-const MODEL_URL   = "best.onnx";   // ONNX 模型（dynamic=True 导出的 1×5×N）
-const INPUT_SIZE  = 608;           // 推理尺寸 (letter-box 后送模型)
-const STRIDES     = [8, 16, 32];   // YOLOv8 默认 3 个 FPN 层
-const SCORE_THRES = 0.25;          // 置信度阈值
-const NMS_IOU     = 0.45;          // IoU 阈值
+/* ---------- 全局配置 ---------- */
+const CFG = {
+  MODEL_URL   : "best.onnx",   // dynamic=True 导出的 raw logits 模型
+  INPUT_SIZE  : 608,
+  STRIDES     : [8, 16, 32],
+  SCORE_THRES : 0.25,
+  NMS_IOU     : 0.45
+};
 
-/* ------------- 工具函数 -------------- */
+/* ---------- 工具函数 ---------- */
 const sigmoid = x => 1 / (1 + Math.exp(-x));
+function iou(a, b) { /* 与之前相同 */ }
+function nms(boxes) { /* 与之前相同 */ }
 
-function iou(a, b) {
-  const [ax1, ay1, ax2, ay2] = a, [bx1, by1, bx2, by2] = b;
-  const inter =
-    Math.max(0, Math.min(ax2, bx2) - Math.max(ax1, bx1)) *
-    Math.max(0, Math.min(ay2, by2) - Math.max(ay1, by1));
-  const union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
-  return inter / union;
-}
-
-function nms(boxes) {
-  boxes.sort((a, b) => b.score - a.score);
-  const keep = [];
-  while (boxes.length) {
-    const box = boxes.shift();
-    keep.push(box);
-    boxes = boxes.filter(b => iou(box.xyxy, b.xyxy) < NMS_IOU);
-  }
-  return keep;
-}
-
-/* 构建 (grid_x, grid_y, stride) 列表，与网络输出顺序一致 */
-function buildGrids(size = INPUT_SIZE) {
-  const grids = [];
-  STRIDES.forEach(s => {
+/* 生成 (grid_x, grid_y, stride) —— 只需一次 */
+function buildGrids(size) {
+  const g = [];
+  CFG.STRIDES.forEach(s => {
     const ny = Math.ceil(size / s);
     const nx = Math.ceil(size / s);
     for (let y = 0; y < ny; ++y)
       for (let x = 0; x < nx; ++x)
-        grids.push([x, y, s]);
+        g.push([x, y, s]);
   });
-  return grids;
+  return g;
 }
 
-/* ------------- 主逻辑 -------------- */
 (async () => {
-  /* 1. 载入 onnxruntime-web */
-  if (!window.ort) {
-    console.error("onnxruntime-web script not loaded!");
-    return;
-  }
+  /* 1. 载入 ort */
+  if (!window.ort) return console.error("💥 ort.min.js not loaded");
   ort.env.wasm.wasmPaths = "./";
-  const session = await ort.InferenceSession.create(MODEL_URL);
-  console.log("✅ ONNX loaded");
-  window.session = session;       // 方便在控制台调试
+  const session = await ort.InferenceSession.create(CFG.MODEL_URL);
+  window.session = session;               // 方便调试
 
   /* 2. DOM */
   const fileInput = document.getElementById("fileInput");
@@ -60,8 +39,8 @@ function buildGrids(size = INPUT_SIZE) {
   const showCtx   = showCvs.getContext("2d");
   const workCtx   = workCvs.getContext("2d");
 
-  /* 3. 预生成 grids（固定 608×608 时一次即可）*/
-  const GRIDS = buildGrids(INPUT_SIZE);      // 长度 7581
+  /* 3. 预生成 grids 对应 7581 个预测点 */
+  const GRIDS = buildGrids(CFG.INPUT_SIZE);
 
   /* 4. 处理上传 */
   fileInput.onchange = async e => {
@@ -78,76 +57,58 @@ function buildGrids(size = INPUT_SIZE) {
     showCtx.clearRect(0, 0, img.width, img.height);
     showCtx.drawImage(img, 0, 0);
 
-    /* 4-2 letter-box 到 608×608 */
-    const scale = Math.min(INPUT_SIZE / img.width, INPUT_SIZE / img.height);
-    const padX  = (INPUT_SIZE - img.width  * scale) / 2;
-    const padY  = (INPUT_SIZE - img.height * scale) / 2;
+    /* 4-2 letter-box → 608×608 */
+    const scale = Math.min(CFG.INPUT_SIZE / img.width, CFG.INPUT_SIZE / img.height);
+    const padX  = (CFG.INPUT_SIZE - img.width  * scale) / 2;
+    const padY  = (CFG.INPUT_SIZE - img.height * scale) / 2;
 
     workCtx.fillStyle = "rgba(114,114,114,1)";
-    workCtx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
-    workCtx.drawImage(
-      img, 0, 0, img.width, img.height,
-      padX, padY, img.width * scale, img.height * scale
-    );
+    workCtx.fillRect(0, 0, CFG.INPUT_SIZE, CFG.INPUT_SIZE);
+    workCtx.drawImage(img, 0, 0, img.width, img.height,
+                      padX, padY, img.width * scale, img.height * scale);
 
-    /* 4-3 取像素 → Float32 [1,3,H,W]*/
-    const imgData = workCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
-    const chw = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+    /* 4-3 RGBA → Float32 CHW */
+    const imgData = workCtx.getImageData(0, 0, CFG.INPUT_SIZE, CFG.INPUT_SIZE).data;
+    const chw = new Float32Array(3 * CFG.INPUT_SIZE * CFG.INPUT_SIZE);
     for (let i = 0, p = 0; i < imgData.length; i += 4, ++p) {
-      chw[p]                     = imgData[i]   / 255;   // R
-      chw[p + INPUT_SIZE**2]     = imgData[i+1] / 255;   // G
-      chw[p + 2*INPUT_SIZE**2]   = imgData[i+2] / 255;   // B
+      chw[p]                       = imgData[i]   / 255;
+      chw[p + CFG.INPUT_SIZE**2]   = imgData[i+1] / 255;
+      chw[p + 2*CFG.INPUT_SIZE**2] = imgData[i+2] / 255;
     }
-    const tensor = new ort.Tensor("float32", chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    const tensor = new ort.Tensor("float32", chw, [1, 3, CFG.INPUT_SIZE, CFG.INPUT_SIZE]);
 
     /* 4-4 推理 */
-    const start = performance.now();
-    const results = await session.run({ images: tensor });
-    const out = Object.values(results)[0];            // 只有一个输出
-    const [ , ch, n] = out.dims;                      // [1,5,7581]
-    const data = out.data;
-    console.log(`⏱️ infer ${(performance.now()-start).toFixed(1)} ms`);
+    const out   = Object.values(await session.run({images: tensor}))[0];  // [1,5,7581]
+    const [ , , n] = out.dims;
+    const data  = out.data;
 
     /* 4-5 解码 + 置信度过滤 */
     const boxes = [];
     for (let i = 0; i < n; ++i) {
       const [gx, gy, s] = GRIDS[i];
-
-      // 中心点与尺寸
       const cx = ((sigmoid(data[i])        * 2 - 0.5) + gx) * s;
       const cy = ((sigmoid(data[i +   n])  * 2 - 0.5) + gy) * s;
       const w  =  Math.pow(sigmoid(data[i + 2*n]) * 2, 2) * s;
       const h  =  Math.pow(sigmoid(data[i + 3*n]) * 2, 2) * s;
-
-      const score = sigmoid(data[i + 4*n]);           // objectness
-      if (score < SCORE_THRES) continue;
-
-      const x1 = cx - w / 2, y1 = cy - h / 2,
-            x2 = cx + w / 2, y2 = cy + h / 2;
-      boxes.push({ score, xyxy: [x1, y1, x2, y2] });
+      const score = sigmoid(data[i + 4*n]);
+      if (score < CFG.SCORE_THRES) continue;
+      boxes.push({ score, xyxy: [cx - w/2, cy - h/2, cx + w/2, cy + h/2] });
     }
 
-    /* 4-6 NMS */
+    /* 4-6 NMS & 映射回原图 */
     const keep = nms(boxes);
-    console.log(`🔍 kept ${keep.length} boxes`);
-
-    /* 4-7 映射回原图并绘制 */
-    showCtx.lineWidth   = 2;
+    showCtx.lineWidth = 2;
     showCtx.strokeStyle = "#00FF00";
     showCtx.fillStyle   = "#00FF00";
-    showCtx.font        = "18px Arial";
+    showCtx.font = "18px Arial";
 
-    keep.forEach(b => {
+    for (const b of keep) {
       let [x1, y1, x2, y2] = b.xyxy;
-      x1 = (x1 - padX) / scale;
-      y1 = (y1 - padY) / scale;
-      x2 = (x2 - padX) / scale;
-      y2 = (y2 - padY) / scale;
-
-      const w = x2 - x1, h = y2 - y1;
-      showCtx.strokeRect(x1, y1, w, h);
+      x1 = (x1 - padX) / scale;  y1 = (y1 - padY) / scale;
+      x2 = (x2 - padX) / scale;  y2 = (y2 - padY) / scale;
+      showCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
       showCtx.fillText(`car ${(b.score*100).toFixed(1)}%`,
-        x1, y1 > 20 ? y1 - 5 : y1 + 20);
-    });
+                       x1, y1 > 20 ? y1 - 5 : y1 + 20);
+    }
   };
 })();
