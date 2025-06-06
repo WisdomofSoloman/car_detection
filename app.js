@@ -1,23 +1,20 @@
-/* ----------------  配置  ---------------- */
-const MODEL_URL   = "best.onnx";     // 放在根目录即可
-const INPUT_SIZE  = 608;             // 训练 / 导出时用的尺寸
-const DEBUG = true;           // ← 打开调试
-const SCORE_THRES = DEBUG ? 0.05 : 0.30;
-const SCORE_THRES = 0.30;            // 置信度阈值
-const NMS_IOU     = 0.45;            // NMS IoU 阈值
+/* ---------------- 配置 ---------------- */
+const MODEL_URL   = "best.onnx";   // ONNX 模型（dynamic=True 导出的 1×5×N）
+const INPUT_SIZE  = 608;           // 推理尺寸 (letter-box 后送模型)
+const STRIDES     = [8, 16, 32];   // YOLOv8 默认 3 个 FPN 层
+const SCORE_THRES = 0.25;          // 置信度阈值
+const NMS_IOU     = 0.45;          // IoU 阈值
 
 /* ------------- 工具函数 -------------- */
 const sigmoid = x => 1 / (1 + Math.exp(-x));
 
-function iou(boxA, boxB) {
-  const [ax1, ay1, ax2, ay2] = boxA;
-  const [bx1, by1, bx2, by2] = boxB;
-  const interArea =
+function iou(a, b) {
+  const [ax1, ay1, ax2, ay2] = a, [bx1, by1, bx2, by2] = b;
+  const inter =
     Math.max(0, Math.min(ax2, bx2) - Math.max(ax1, bx1)) *
     Math.max(0, Math.min(ay2, by2) - Math.max(ay1, by1));
-  const unionArea =
-    (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - interArea;
-  return interArea / unionArea;
+  const union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
+  return inter / union;
 }
 
 function nms(boxes) {
@@ -31,16 +28,30 @@ function nms(boxes) {
   return keep;
 }
 
+/* 构建 (grid_x, grid_y, stride) 列表，与网络输出顺序一致 */
+function buildGrids(size = INPUT_SIZE) {
+  const grids = [];
+  STRIDES.forEach(s => {
+    const ny = Math.ceil(size / s);
+    const nx = Math.ceil(size / s);
+    for (let y = 0; y < ny; ++y)
+      for (let x = 0; x < nx; ++x)
+        grids.push([x, y, s]);
+  });
+  return grids;
+}
+
 /* ------------- 主逻辑 -------------- */
 (async () => {
-  /* 1. 载入 ort */
+  /* 1. 载入 onnxruntime-web */
   if (!window.ort) {
     console.error("onnxruntime-web script not loaded!");
     return;
   }
-  ort.env.wasm.wasmPaths = "./";           // 告诉它 wasm 放在同目录
+  ort.env.wasm.wasmPaths = "./";
   const session = await ort.InferenceSession.create(MODEL_URL);
   console.log("✅ ONNX loaded");
+  window.session = session;       // 方便在控制台调试
 
   /* 2. DOM */
   const fileInput = document.getElementById("fileInput");
@@ -49,94 +60,94 @@ function nms(boxes) {
   const showCtx   = showCvs.getContext("2d");
   const workCtx   = workCvs.getContext("2d");
 
-  /* 3. 处理上传 */
+  /* 3. 预生成 grids（固定 608×608 时一次即可）*/
+  const GRIDS = buildGrids(INPUT_SIZE);      // 长度 7581
+
+  /* 4. 处理上传 */
   fileInput.onchange = async e => {
     const file = e.target.files[0];
     if (!file) return;
 
-    /* 3-1 读图 & 按比例绘制到展示画布 */
+    /* 4-1 读图并绘制到展示画布 */
     const img = new Image();
     img.src = URL.createObjectURL(file);
     await img.decode();
 
-    // 让展示画布跟图一样比例
     showCvs.width  = img.width;
     showCvs.height = img.height;
+    showCtx.clearRect(0, 0, img.width, img.height);
     showCtx.drawImage(img, 0, 0);
 
-    /* 3-2 letter-box => 608×608，得到在原图中的 scale/offset  */
-    let scale = Math.min(INPUT_SIZE / img.width, INPUT_SIZE / img.height);
-    let padX  = (INPUT_SIZE - img.width  * scale) / 2;
-    let padY  = (INPUT_SIZE - img.height * scale) / 2;
+    /* 4-2 letter-box 到 608×608 */
+    const scale = Math.min(INPUT_SIZE / img.width, INPUT_SIZE / img.height);
+    const padX  = (INPUT_SIZE - img.width  * scale) / 2;
+    const padY  = (INPUT_SIZE - img.height * scale) / 2;
 
-    workCtx.fillStyle = "rgba(114,114,114,1)";   // 与 Ultralytics 一致
+    workCtx.fillStyle = "rgba(114,114,114,1)";
     workCtx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
     workCtx.drawImage(
-      img,
-      0, 0, img.width, img.height,
+      img, 0, 0, img.width, img.height,
       padX, padY, img.width * scale, img.height * scale
     );
 
-    /* 3-3 取像素 -> Float32[1,3,608,608] */
+    /* 4-3 取像素 → Float32 [1,3,H,W]*/
     const imgData = workCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
     const chw = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
     for (let i = 0, p = 0; i < imgData.length; i += 4, ++p) {
-      chw[p]                       = imgData[i]   / 255;       // R
-      chw[p + INPUT_SIZE**2]       = imgData[i+1] / 255;       // G
-      chw[p + 2*INPUT_SIZE**2]     = imgData[i+2] / 255;       // B
+      chw[p]                     = imgData[i]   / 255;   // R
+      chw[p + INPUT_SIZE**2]     = imgData[i+1] / 255;   // G
+      chw[p + 2*INPUT_SIZE**2]   = imgData[i+2] / 255;   // B
     }
     const tensor = new ort.Tensor("float32", chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
 
-    /* 3-4  推理 */
-    /* 3-4  推理 */
+    /* 4-4 推理 */
+    const start = performance.now();
     const results = await session.run({ images: tensor });
-    console.log("ONNX output keys:", Object.keys(results));
+    const out = Object.values(results)[0];            // 只有一个输出
+    const [ , ch, n] = out.dims;                      // [1,5,7581]
+    const data = out.data;
+    console.log(`⏱️ infer ${(performance.now()-start).toFixed(1)} ms`);
 
-    const out = Object.values(results)[0];   // 先取第一个输出
-    console.log("dims =", out.dims);         // onnxruntime-web ≥1.20
-    console.log("first 18 numbers =", Array.from(out.data).slice(0, 18));
-    const scores = [];
-    for (let i = 4; i < out.data.length; i += 6) scores.push(out.data[i]);
-    console.log("max score =", Math.max(...scores));
-
-    const { output0 } = await session.run({ images: tensor });
-    const data = output0.data;          // Float32Array  len = 1×5×7581
-
-    /* 3-5 解析 + NMS */
-    /* 3-5 解析 */
+    /* 4-5 解码 + 置信度过滤 */
     const boxes = [];
-    const [b, num, ch] = out.dims;   // ch=6
-    for (let i = 0; i < num; ++i) {
-      const off = i * ch;
-      const x1    = out.data[off];
-      const y1    = out.data[off+1];
-      const x2    = out.data[off+2];
-      const y2    = out.data[off+3];
-      const score = out.data[off+4];
+    for (let i = 0; i < n; ++i) {
+      const [gx, gy, s] = GRIDS[i];
+
+      // 中心点与尺寸
+      const cx = ((sigmoid(data[i])        * 2 - 0.5) + gx) * s;
+      const cy = ((sigmoid(data[i +   n])  * 2 - 0.5) + gy) * s;
+      const w  =  Math.pow(sigmoid(data[i + 2*n]) * 2, 2) * s;
+      const h  =  Math.pow(sigmoid(data[i + 3*n]) * 2, 2) * s;
+
+      const score = sigmoid(data[i + 4*n]);           // objectness
       if (score < SCORE_THRES) continue;
-      boxes.push({score, xyxy:[x1,y1,x2,y2]});
-}
 
+      const x1 = cx - w / 2, y1 = cy - h / 2,
+            x2 = cx + w / 2, y2 = cy + h / 2;
+      boxes.push({ score, xyxy: [x1, y1, x2, y2] });
+    }
 
-    /* 3-6 绘制结果 (映射回原图坐标) */
-    showCtx.lineWidth = 2;
-    showCtx.font = "18px Arial";
+    /* 4-6 NMS */
+    const keep = nms(boxes);
+    console.log(`🔍 kept ${keep.length} boxes`);
+
+    /* 4-7 映射回原图并绘制 */
+    showCtx.lineWidth   = 2;
     showCtx.strokeStyle = "#00FF00";
     showCtx.fillStyle   = "#00FF00";
+    showCtx.font        = "18px Arial";
 
     keep.forEach(b => {
-     let [x1, y1, x2, y2] = b.xyxy;
-     x1 = (x1 - padX) / scale;
-     y1 = (y1 - padY) / scale;
-     x2 = (x2 - padX) / scale;
-     y2 = (y2 - padY) / scale;
+      let [x1, y1, x2, y2] = b.xyxy;
+      x1 = (x1 - padX) / scale;
+      y1 = (y1 - padY) / scale;
+      x2 = (x2 - padX) / scale;
+      y2 = (y2 - padY) / scale;
 
-     const w = x2 - x1, h = y2 - y1;
-     showCtx.strokeRect(x1, y1, w, h);
-     showCtx.fillText(`car ${(b.score * 100).toFixed(1)}%`, x1, y1 > 20 ? y1 - 5 : y1 + 20);
-});
-
-
-    console.log(`🔍 kept ${keep.length} boxes`);
+      const w = x2 - x1, h = y2 - y1;
+      showCtx.strokeRect(x1, y1, w, h);
+      showCtx.fillText(`car ${(b.score*100).toFixed(1)}%`,
+        x1, y1 > 20 ? y1 - 5 : y1 + 20);
+    });
   };
 })();
