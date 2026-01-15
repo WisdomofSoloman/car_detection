@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Car-Detector ONNX Demo</title>
+<style>
+ body{font-family:sans-serif;text-align:center;background:#eee;margin:0}
+ h1{margin:1rem 0}
+ canvas{border:1px solid #ccc;max-width:100%;height:auto}
+ #work{display:none}          /* ▶︎ 隐藏工作用 608×608 画布 */
+</style>
+</head>
+<body>
+  <h1>Car-Detector ONNX Demo</h1>
+
+  <label for="fileInput">选择待检测图片：</label>
+  <input  id="fileInput" type="file" accept="image/*" title="上传一张车的照片">
+
+  <br>
+  <!-- 展示画布（按原始比例显示）-->
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <!-- 隐藏工作画布（固定 608×608，用来喂模型）-->
+  <canvas id="work"   width="608" height="608"></canvas>
+
+  <!-- 本地的 ort.min.js 与业务脚本 -->
+  <script src="ort.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
